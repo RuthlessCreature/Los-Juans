@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_MISSION, isSecureModelUrl, publicSnapshot, validateMissionPatch, validateOpportunity, actionPolicy } from '../src/domain.mjs';
+import { DEFAULT_MISSION, isSecureModelUrl, publicSnapshot, validateMissionPatch, validateOpportunity, validateAssessment, actionPolicy } from '../src/domain.mjs';
 
 test('default mandate prevents monetary and external actions', () => {
   assert.equal(DEFAULT_MISSION.newCashSpendLimitCny, 0);
@@ -41,4 +41,12 @@ test('commercially sensitive actions require approval regardless of LLM output',
   assert.equal(actionPolicy('contact-person'), 'requires-human-approval');
   assert.equal(actionPolicy('purchase'), 'requires-human-approval');
   assert.equal(actionPolicy('self-change-permissions'), 'prohibited');
+});
+
+test('an unknown buyer becomes a low-confidence finding, never an invented customer', () => {
+  const result = validateAssessment({ buyer: '', offer: 'Build a narrow service pilot', test: 'Ask for a real paid order', risk: 'Public comment may be noise', confidence: 88 });
+  assert.equal(result.buyerEvidenceMissing, true);
+  assert.equal(result.confidence, 20);
+  assert.match(result.buyer, /No identifiable paying buyer/);
+  assert.equal(result.hasVerifiedPayment, false);
 });
