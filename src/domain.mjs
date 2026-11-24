@@ -58,7 +58,13 @@ export function validateOpportunity(value) {
 export function validateAssessment(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Invalid model assessment');
   const result = {};
+  const buyerUnknown = typeof value.buyer !== 'string' || value.buyer.trim().length < 8;
   for (const key of ['buyer', 'offer', 'test', 'risk']) {
+    if (key === 'buyer' && buyerUnknown) {
+      // Missing buyer evidence is a valid negative finding, not a reason to hallucinate a customer.
+      result.buyer = 'No identifiable paying buyer verified from this evidence.';
+      continue;
+    }
     if (typeof value[key] !== 'string' || value[key].trim().length < 8 || value[key].length > 1200) {
       throw new TypeError(`Missing or invalid assessment field: ${key}`);
     }
@@ -67,7 +73,8 @@ export function validateAssessment(value) {
   if (!Number.isInteger(value.confidence) || value.confidence < 0 || value.confidence > 100) {
     throw new TypeError('Assessment confidence must be 0–100');
   }
-  result.confidence = value.confidence;
+  result.confidence = buyerUnknown ? Math.min(value.confidence, 20) : value.confidence;
+  result.buyerEvidenceMissing = buyerUnknown;
   result.hasVerifiedPayment = false; // An LLM cannot certify payment.
   return result;
 }
