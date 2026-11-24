@@ -31,7 +31,11 @@ export async function chatCompletion({ baseUrl, apiKey, model, messages, allowIn
       method: 'POST',
       redirect: 'manual', // Workers reject `error`; 3xx stays non-ok and is never followed.
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false, temperature: 0.2, max_tokens: 700 }),
+      body: JSON.stringify({
+        model, messages, stream: false, temperature: 0.1, max_tokens: 1100,
+        response_format: { type: 'json_object' },
+        chat_template_kwargs: { enable_thinking: false },
+      }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Model gateway returned HTTP ${response.status}`);
