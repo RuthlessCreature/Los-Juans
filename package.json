@@ -1,10 +1,10 @@
 {
   "name": "los-juans",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/worker.mjs && node --check src/domain.mjs && node --check src/discovery.mjs && node --check src/model.mjs && npm test"
+    "check": "node --check src/worker.mjs && node --check src/domain.mjs && node --check src/discovery.mjs && node --check src/model.mjs && node --check src/paypal.mjs && npm test"
   }
 }
