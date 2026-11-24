@@ -1,4 +1,4 @@
-export const JUAN_VERSION = '0.1.0';
+export const JUAN_VERSION = '0.2.0';
 export const JUAN_NAME = 'Juan';
 
 export const DEFAULT_MISSION = Object.freeze({
@@ -42,21 +42,59 @@ export function isSecureModelUrl(value) {
   }
 }
 
-export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCount }) {
+export function validateOpportunity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Expected an opportunity object');
+  const title = typeof value.title === 'string' ? value.title.trim() : '';
+  const sourceUrl = typeof value.sourceUrl === 'string' ? value.sourceUrl.trim() : '';
+  const buyerSignal = typeof value.buyerSignal === 'string' ? value.buyerSignal.trim() : '';
+  const hypothesis = typeof value.hypothesis === 'string' ? value.hypothesis.trim() : '';
+  if (title.length < 5 || title.length > 180) throw new TypeError('Invalid opportunity title');
+  if (!isSecureModelUrl(sourceUrl) || sourceUrl.length > 1800) throw new TypeError('Opportunity source must be HTTPS');
+  if (buyerSignal.length < 10 || buyerSignal.length > 1600) throw new TypeError('Buyer evidence is required');
+  if (hypothesis.length < 10 || hypothesis.length > 1600) throw new TypeError('Testable hypothesis is required');
+  return { title, sourceUrl, buyerSignal, hypothesis };
+}
+
+export function validateAssessment(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Invalid model assessment');
+  const result = {};
+  for (const key of ['buyer', 'offer', 'test', 'risk']) {
+    if (typeof value[key] !== 'string' || value[key].trim().length < 8 || value[key].length > 1200) {
+      throw new TypeError(`Missing or invalid assessment field: ${key}`);
+    }
+    result[key] = value[key].trim();
+  }
+  if (!Number.isInteger(value.confidence) || value.confidence < 0 || value.confidence > 100) {
+    throw new TypeError('Assessment confidence must be 0–100');
+  }
+  result.confidence = value.confidence;
+  result.hasVerifiedPayment = false; // An LLM cannot certify payment.
+  return result;
+}
+
+export function actionPolicy(kind) {
+  const allowed = new Set(['read-public-web', 'analyze-evidence', 'draft-private-proposal']);
+  const approval = new Set(['publish', 'contact-person', 'purchase', 'accept-contract', 'deploy-product']);
+  if (allowed.has(kind)) return 'allowed-in-read-only-mode';
+  if (approval.has(kind)) return 'requires-human-approval';
+  return 'prohibited';
+}
+
+export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCount, opportunityCount = 0 }) {
   return {
     name: JUAN_NAME,
     version: JUAN_VERSION,
-    phase: 'infrastructure',
+    phase: 'read-only-research',
     mode: state.mode,
     autonomy: state.autonomy,
     safeguards: {
       externalSpending: false,
       outboundActions: false,
-      autonomousModelCalls: false,
+      autonomousModelCalls: state.modelCallsEnabled,
     },
-    model: { provider: 'vllm', connection: 'disabled-until-secure-endpoint' },
+    model: { provider: 'vllm', connection: state.modelCallsEnabled ? 'enabled-by-owner' : 'disabled-until-secure-endpoint' },
     goal: { firstVerifiedRevenueCny: state.firstRevenueTargetCny },
     finance: { verifiedRevenueCny: 0, newCashSpendCny: 0, modelAccountingCny: 0 },
-    activity: { heartbeatCount, latestHeartbeat, eventCount },
+    activity: { heartbeatCount, latestHeartbeat, eventCount, opportunityCount },
   };
 }
