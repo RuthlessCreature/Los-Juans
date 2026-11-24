@@ -80,7 +80,7 @@ export function actionPolicy(kind) {
   return 'prohibited';
 }
 
-export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCount, opportunityCount = 0 }) {
+export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCount, opportunityCount = 0, queuedTaskCount = 0 }) {
   return {
     name: JUAN_NAME,
     version: JUAN_VERSION,
@@ -95,6 +95,6 @@ export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCo
     model: { provider: 'vllm', connection: state.modelCallsEnabled ? 'enabled-by-owner' : 'disabled-until-secure-endpoint' },
     goal: { firstVerifiedRevenueCny: state.firstRevenueTargetCny },
     finance: { verifiedRevenueCny: 0, newCashSpendCny: 0, modelAccountingCny: 0 },
-    activity: { heartbeatCount, latestHeartbeat, eventCount, opportunityCount },
+    activity: { heartbeatCount, latestHeartbeat, eventCount, opportunityCount, queuedTaskCount },
   };
 }
