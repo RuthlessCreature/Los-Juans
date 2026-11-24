@@ -10,7 +10,7 @@ Juan 是一个基于 Cloudflare Worker + Durable Object 的自主创业 Agent �
 - SQLite-backed Durable Object，持久保存使命、事件和财务记录表。
 - **移除固定 15 分钟心跳**。队列有任务时立即处理完一条接下一条，队列空时不运行空转循环；失败退避 5 分钟。Cloudflare Worker 不承诺常驻无限运行，连续任务通过 Durable Object 工作事件接力完成。
 - 每 6 小时从固定的 [HN Algolia Search API](https://hn.algolia.com/api) 读取近期公开评论，提取**未经验证的需求线索**；HTTPS 来源链接、原文片段和初步假设存入 SQLite，自动去重，最多保留 500 条。
-- 模型适配器：兼容 OpenAI Chat Completions 格式，默认强制 HTTPS、禁止重定向、超时控制、严格解析机会评估 JSON。仅在所有者明确授权并配置 `JUAN_ALLOW_HTTP_VLLM=true` 时允许不加密 HTTP，风险见下文。
+- 模型适配器：兼容 OpenAI Chat Completions 格式，默认强制 HTTPS、禁止重定向、90 秒推理超时控制、严格解析机会评估 JSON。仅在所有者明确授权并配置 `JUAN_ALLOW_HTTP_VLLM=true` 时允许不加密 HTTP，风险见下文。
 - 机会池和行动审批队列：记录待审、批准、拒绝状态；即使批准，当前版本也**没有对外执行器**。
 - 每条新线索自动创建持久化 `assess-opportunity` 任务；在管理员明确启用模型之前，任务只排队。启用后按任务接力执行，最多 20 次模型尝试/UTC 日、每条最多 3 次尝试。
 - 公开接口仅返回经过裁剪的安全状态；管理接口默认锁定。
