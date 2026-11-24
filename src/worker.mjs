@@ -306,6 +306,16 @@ export class JuanCore extends DurableObject {
     return { id, status: candidate.decision, execution: 'not-implemented' };
   }
 
+  async retryTask(id) {
+    const task = this.ctx.storage.sql.exec('SELECT id, status FROM tasks WHERE id = ?', id).toArray()[0];
+    if (!task) throw new RangeError('Task not found');
+    if (task.status !== 'failed') throw new TypeError('Only failed tasks can be retried');
+    this.ctx.storage.sql.exec("UPDATE tasks SET status = 'queued', attempts = 0, last_error = NULL, updated_at = ? WHERE id = ?", new Date().toISOString(), id);
+    this.record('task-requeued', `Owner requeued failed task ${id}`);
+    if (this.mission().modelCallsEnabled && this.modelReady()) await this.ctx.storage.setAlarm(Date.now() + 100);
+    return { id, status: 'queued' };
+  }
+
   async alarm() {
     if (!this.mission().modelCallsEnabled || !this.modelReady()) return;
     const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -379,6 +389,8 @@ export default {
         if (assess && request.method === 'POST') return json(await core.assessOpportunity(Number(assess[1])));
         const decide = /^\/api\/admin\/actions\/(\d+)\/decision$/.exec(url.pathname);
         if (decide && request.method === 'POST') return json(await core.decideAction(Number(decide[1]), await parseSmallJson(request)));
+        const retry = /^\/api\/admin\/tasks\/(\d+)\/retry$/.exec(url.pathname);
+        if (retry && request.method === 'POST') return json(await core.retryTask(Number(retry[1])));
         return json({ error: 'Not found' }, 404);
       }
       return json({ error: 'Not found' }, 404);
