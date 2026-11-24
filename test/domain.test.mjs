@@ -15,15 +15,15 @@ test('mission changes cannot override safety settings', () => {
   assert.throws(() => validateMissionPatch({ firstRevenueTargetCny: -1 }));
 });
 
-test('never transmit model credentials over HTTP', () => {
+test('HTTPS is the default transport requirement', () => {
   assert.equal(isSecureModelUrl('http://example.com/v1'), false);
   assert.equal(isSecureModelUrl('https://example.com/v1'), true);
   assert.equal(isSecureModelUrl('https://user:pass@example.com/v1'), false);
 });
 
 test('public status never includes mission statement or secrets', () => {
-  const status = publicSnapshot({ state: DEFAULT_MISSION, heartbeatCount: 3, eventCount: 4, latestHeartbeat: null, queuedTaskCount: 2 });
-  assert.equal(status.activity.heartbeatCount, 3);
+  const status = publicSnapshot({ state: DEFAULT_MISSION, discoveryCount: 3, eventCount: 4, latestDiscovery: null, queuedTaskCount: 2 });
+  assert.equal(status.activity.discoveryCount, 3);
   assert.equal(status.activity.queuedTaskCount, 2);
   assert.equal(status.finance.verifiedRevenueCny, 0);
   assert.equal(JSON.stringify(status).includes(DEFAULT_MISSION.statement), false);
