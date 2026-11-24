@@ -36,6 +36,7 @@ Juan 是一个基于 Cloudflare Worker + Durable Object 的自主创业 Agent �
 | POST | `/api/admin/opportunities/:id/assess` | 使用安全配置的 vLLM 评估机会；否则返回 409 |
 | POST | `/api/admin/actions` | 将需批准的行动添加到待审队列 |
 | POST | `/api/admin/actions/:id/decision` | 管理员批准或拒绝；不触发实际执行 |
+| POST | `/api/admin/tasks/:id/retry` | 管理员手动重新排队失败任务，清零该任务重试计数 |
 
 管理接口需要在 Cloudflare 配置 `JUAN_ADMIN_TOKEN` Secret。在未设置或凭据不正确时返回 403。请求头为 `x-juan-admin-token`。此版本不在网页中收集管理员 Token。所有对外有后果的行动都不能绕过人工审批。
 
