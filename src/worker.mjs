@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { actionPolicy, DEFAULT_MISSION, JUAN_VERSION, publicSnapshot, validateMissionPatch, validateOpportunity } from './domain.mjs';
 import { discoverPublicSignals } from './discovery.mjs';
-import { chatCompletion, completionUrl, ModelNotConfiguredError, parseAssessment } from './model.mjs';
+import { chatCompletion, completionUrl, ModelNotConfiguredError, parseAssessment, probeModel } from './model.mjs';
 
 const JOB_RETRY_DELAY_MS = 5 * 60 * 1000;
 const DISCOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -207,6 +207,15 @@ export class JuanCore extends DurableObject {
     } catch { return false; }
   }
 
+  async modelProbe() {
+    if (!this.modelReady()) throw new ModelNotConfiguredError();
+    return probeModel({
+      baseUrl: this.env.JUAN_VLLM_BASE_URL,
+      apiKey: this.env.JUAN_VLLM_API_KEY,
+      allowInsecureHttp: this.env.JUAN_ALLOW_HTTP_VLLM === 'true',
+    });
+  }
+
   async setModelEnabled(candidate) {
     if (!candidate || typeof candidate.enabled !== 'boolean' || Object.keys(candidate).length !== 1) {
       throw new TypeError('Expected { enabled: boolean }');
@@ -362,6 +371,7 @@ export default {
           return json({ mission: await core.updateMission(await parseSmallJson(request)) });
         }
         if (url.pathname === '/api/admin/model-mode' && request.method === 'PATCH') return json(await core.setModelEnabled(await parseSmallJson(request)));
+        if (url.pathname === '/api/admin/model-probe' && request.method === 'GET') return json(await core.modelProbe());
         if (url.pathname === '/api/admin/opportunities' && request.method === 'POST') return json(await core.addOpportunity(await parseSmallJson(request)), 201);
         if (url.pathname === '/api/admin/discover' && request.method === 'POST') return json(await core.discover(true));
         if (url.pathname === '/api/admin/actions' && request.method === 'POST') return json(await core.requestAction(await parseSmallJson(request)), 201);
