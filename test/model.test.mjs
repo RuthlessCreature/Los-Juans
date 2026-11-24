@@ -21,7 +21,7 @@ test('model adapter uses secure authenticated requests', async () => {
   });
   assert.equal(called[0].url, 'https://llm.example.com/v1/chat/completions');
   assert.equal(called[0].options.headers.authorization, 'Bearer fake-test-key');
-  assert.equal(called[0].options.redirect, 'error');
+  assert.equal(called[0].options.redirect, 'manual');
   assert.equal(result.usage.total_tokens, 7);
   assert.equal(result.content, 'OK');
 });
