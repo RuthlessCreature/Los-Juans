@@ -44,6 +44,26 @@ export async function chatCompletion({ baseUrl, apiKey, model, messages, allowIn
   }
 }
 
+export async function probeModel({ baseUrl, apiKey, allowInsecureHttp = false, fetcher = fetch, timeoutMs = 8000 }) {
+  if (!apiKey) throw new ModelNotConfiguredError();
+  const url = completionUrl(baseUrl, { allowInsecureHttp }).replace(/\/chat\/completions$/, '/models');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const start = Date.now();
+  try {
+    const response = await fetcher(url, {
+      method: 'GET', redirect: 'manual',
+      headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    return { reachable: true, status: response.status, elapsedMs: Date.now() - start };
+  } catch (error) {
+    return { reachable: false, reason: error?.name === 'AbortError' ? 'timeout' : 'network-error', elapsedMs: Date.now() - start };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function parseAssessment(content) {
   if (typeof content !== 'string') throw new TypeError('Model response is not text');
   const trimmed = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
