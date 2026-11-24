@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
-import { actionPolicy, DEFAULT_MISSION, isSecureModelUrl, JUAN_VERSION, publicSnapshot, validateMissionPatch, validateOpportunity } from './domain.mjs';
+import { actionPolicy, DEFAULT_MISSION, JUAN_VERSION, publicSnapshot, validateMissionPatch, validateOpportunity } from './domain.mjs';
 import { discoverPublicSignals } from './discovery.mjs';
-import { chatCompletion, ModelNotConfiguredError, parseAssessment } from './model.mjs';
+import { chatCompletion, completionUrl, ModelNotConfiguredError, parseAssessment } from './model.mjs';
 
-const HEARTBEAT_MS = 15 * 60 * 1000;
+const JOB_RETRY_DELAY_MS = 5 * 60 * 1000;
 const DISCOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MAX_OPPORTUNITIES = 500;
 const MAX_MODEL_ATTEMPTS_PER_DAY = 20;
@@ -101,7 +101,13 @@ export class JuanCore extends DurableObject {
         this.ctx.storage.sql.exec('INSERT INTO settings(key, value) VALUES (?, ?)', 'mission', JSON.stringify(DEFAULT_MISSION));
         this.record('created', 'Juan initialized with safe defaults');
       }
-      if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
+      // One-time migration: cancel the legacy 15-minute heartbeat alarm.
+      // Subsequent alarms are only created when there is concrete work in the queue.
+      const removed = this.ctx.storage.sql.exec('SELECT 1 FROM settings WHERE key = ?', 'legacy_heartbeat_removed').toArray();
+      if (!removed.length) {
+        await this.ctx.storage.deleteAlarm();
+        this.ctx.storage.sql.exec('INSERT INTO settings(key,value) VALUES (?,?)', 'legacy_heartbeat_removed', new Date().toISOString());
+      }
     });
   }
 
@@ -117,12 +123,12 @@ export class JuanCore extends DurableObject {
   }
 
   async status() {
-    const heartbeatCount = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM events WHERE kind = 'heartbeat'").one().n;
+    const discoveryCount = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM events WHERE kind = 'public-discovery'").one().n;
     const eventCount = this.ctx.storage.sql.exec('SELECT COUNT(*) AS n FROM events').one().n;
-    const latest = this.ctx.storage.sql.exec("SELECT timestamp FROM events WHERE kind = 'heartbeat' ORDER BY id DESC LIMIT 1").toArray();
+    const latest = this.ctx.storage.sql.exec("SELECT timestamp FROM events WHERE kind = 'public-discovery' ORDER BY id DESC LIMIT 1").toArray();
     const opportunityCount = this.ctx.storage.sql.exec('SELECT COUNT(*) AS n FROM opportunities').one().n;
     const queuedTaskCount = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM tasks WHERE status = 'queued'").one().n;
-    return publicSnapshot({ state: this.mission(), heartbeatCount, eventCount, opportunityCount, queuedTaskCount, latestHeartbeat: latest[0]?.timestamp ?? null });
+    return publicSnapshot({ state: this.mission(), discoveryCount, eventCount, opportunityCount, queuedTaskCount, latestDiscovery: latest[0]?.timestamp ?? null });
   }
 
   async privateStatus() {
@@ -159,6 +165,9 @@ export class JuanCore extends DurableObject {
       opportunity.buyerSignal, opportunity.hypothesis, sourceKind);
     const row = this.ctx.storage.sql.exec('SELECT id, status FROM opportunities WHERE source_url = ?', opportunity.sourceUrl).one();
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO tasks(opportunity_id, task_type, status, updated_at) VALUES (?, 'assess-opportunity', 'queued', ?)", row.id, new Date().toISOString());
+    if (this.mission().modelCallsEnabled && this.modelReady()) {
+      this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 100));
+    }
     return { id: row.id, status: row.status, sourceUrl: opportunity.sourceUrl, created: true };
   }
 
@@ -191,8 +200,11 @@ export class JuanCore extends DurableObject {
   }
 
   modelReady() {
-    return Boolean(isSecureModelUrl(this.env.JUAN_VLLM_BASE_URL)
-      && this.env.JUAN_VLLM_API_KEY && this.env.JUAN_VLLM_MODEL);
+    if (!this.env.JUAN_VLLM_API_KEY || !this.env.JUAN_VLLM_MODEL) return false;
+    try {
+      completionUrl(this.env.JUAN_VLLM_BASE_URL, { allowInsecureHttp: this.env.JUAN_ALLOW_HTTP_VLLM === 'true' });
+      return true;
+    } catch { return false; }
   }
 
   async setModelEnabled(candidate) {
@@ -203,6 +215,8 @@ export class JuanCore extends DurableObject {
     const updated = { ...this.mission(), modelCallsEnabled: candidate.enabled };
     this.ctx.storage.sql.exec('UPDATE settings SET value = ? WHERE key = ?', JSON.stringify(updated), 'mission');
     this.record('model-mode-changed', `Owner set model calls ${candidate.enabled ? 'enabled' : 'disabled'}`);
+    if (candidate.enabled) await this.ctx.storage.setAlarm(Date.now() + 100);
+    else await this.ctx.storage.deleteAlarm();
     return { enabled: candidate.enabled };
   }
 
@@ -233,6 +247,7 @@ export class JuanCore extends DurableObject {
       const result = await chatCompletion({
         baseUrl: this.env.JUAN_VLLM_BASE_URL, apiKey: this.env.JUAN_VLLM_API_KEY,
         model: this.env.JUAN_VLLM_MODEL,
+        allowInsecureHttp: this.env.JUAN_ALLOW_HTTP_VLLM === 'true',
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       });
       const assessment = parseAssessment(result.content);
@@ -283,22 +298,26 @@ export class JuanCore extends DurableObject {
   }
 
   async alarm() {
-    try {
-      this.record('heartbeat', 'Wake cycle completed. Research is read-only; outbound actions stay disabled.');
-      try { await this.discover(); }
-      catch (error) { this.record('discovery-error', `Read-only feed failed: ${asMessage(error).slice(0, 180)}`); }
-      if (this.mission().modelCallsEnabled && this.modelReady()) {
-        const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
-        this.ctx.storage.sql.exec("UPDATE tasks SET status = 'failed' WHERE status = 'running' AND updated_at < ?", staleBefore);
-        const task = this.ctx.storage.sql.exec("SELECT opportunity_id FROM tasks WHERE status IN ('queued','failed') AND attempts < 3 ORDER BY id LIMIT 1").toArray()[0];
-        if (task) {
-          try { await this.assessOpportunity(task.opportunity_id); }
-          catch (error) { this.record('model-cycle-skipped', asMessage(error).slice(0, 120)); }
-        }
-      }
-    } finally {
-      await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS);
+    if (!this.mission().modelCallsEnabled || !this.modelReady()) return;
+    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+    this.ctx.storage.sql.exec("UPDATE tasks SET status = 'failed' WHERE status = 'running' AND updated_at < ?", staleBefore);
+    const task = this.ctx.storage.sql.exec("SELECT opportunity_id FROM tasks WHERE status IN ('queued','failed') AND attempts < 3 ORDER BY id LIMIT 1").toArray()[0];
+    if (!task) return;
+    let delay = 100;
+    try { await this.assessOpportunity(task.opportunity_id); }
+    catch (error) {
+      this.record('model-cycle-skipped', asMessage(error).slice(0, 120));
+      delay = JOB_RETRY_DELAY_MS;
     }
+    const pending = this.ctx.storage.sql.exec("SELECT 1 FROM tasks WHERE status IN ('queued','failed') AND attempts < 3 LIMIT 1").toArray();
+    if (pending.length && this.hasDailyModelBudget()) await this.ctx.storage.setAlarm(Date.now() + delay);
+  }
+
+  hasDailyModelBudget() {
+    const day = new Date().toISOString().slice(0, 10);
+    const previousDay = this.ctx.storage.sql.exec('SELECT value FROM settings WHERE key = ?', 'model_attempt_day').toArray()[0]?.value;
+    const count = Number(this.ctx.storage.sql.exec('SELECT value FROM settings WHERE key = ?', 'model_attempt_count').toArray()[0]?.value ?? 0);
+    return previousDay !== day || count < MAX_MODEL_ATTEMPTS_PER_DAY;
   }
 }
 
@@ -316,13 +335,13 @@ main{padding-top:28px;padding-bottom:50px}.hero{background:var(--card);border:1p
 button{background:var(--navy);color:#fff;padding:9px 16px;border:0;border-radius:3px;cursor:pointer;font:inherit}button:hover{background:#28527e}button:disabled{opacity:.6;cursor:wait}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}}@media(max-width:480px){.grid{grid-template-columns:1fr 1fr}.panel{padding:14px}.value{font-size:21px}.top .wrap{padding:18px 16px}.wrap{padding-left:16px;padding-right:16px}.hero{padding:20px}}
 </style></head><body>
-<header class="top"><div class="wrap"><div><div class="sub">AUTONOMOUS BUSINESS AGENT</div><div class="brand">JUAN <span style="font-weight:300">/ 控制中心</span></div></div><span class="tag">独立环境 · V0.2</span></div></header>
-<main class="wrap"><section class="hero"><h1>让 Juan 自主探索，但每一步都有边界。</h1><p>已开启固定公开源的只读需求线索发现。线索未经核实，不能算客户；模型待 HTTPS 安全接入，对外发布和付款仍关闭。</p></section>
-<div class="grid"><div class="panel"><div class="label">运行状态</div><div class="value ok" id="phase">载入中</div><div class="tiny">Cloudflare Durable Object</div></div><div class="panel"><div class="label">自主唤醒次数</div><div class="value" id="ticks">—</div><div class="tiny">每15分钟一次</div></div><div class="panel"><div class="label">已验证收入</div><div class="value" id="revenue">¥0</div><div class="tiny">以实际到账为准</div></div><div class="panel"><div class="label">已记账新增支出</div><div class="value" id="cash">¥0</div><div class="tiny">尚未接入云服务账单</div></div></div>
-<div class="split"><section class="section"><h2>自治边界</h2><div class="row"><span>自主目标</span><strong>寻找并验证真实付费机会</strong></div><div class="row"><span>模型</span><strong class="warn">vLLM / 待 HTTPS 接入</strong></div><div class="row"><span>信息探索</span><strong class="ok">公开源只读 · 6小时巡检</strong></div><div class="row"><span>对外联系/发布</span><strong class="warn">需人工批准，执行器关闭</strong></div><div class="row"><span>支付与采购</span><strong class="warn">关闭</strong></div><div class="row"><span>首笔到账目标</span><strong>¥1</strong></div><p class="hint">线索只记录原始证据，不等于经过验证的市场需求。审批记录不自动触发外部行动。</p></section><section class="section"><h2>研究状态</h2><div class="row"><span>记忆系统</span><strong class="ok">持久化就绪</strong></div><div class="row"><span>公开需求线索</span><strong id="leads">—</strong></div><div class="row"><span>待评估任务</span><strong id="tasks">—</strong></div><div class="row"><span>执行日志</span><strong id="events">—</strong></div><div class="row"><span>最后唤醒</span><strong id="last">等待首次触发</strong></div><div class="row"><span>LLM Adapter</span><strong class="warn">HTTPS 安全门禁</strong></div><p class="hint" id="notice">正在检查服务状态……</p><button id="refresh" type="button">刷新状态</button></section></div>
+<header class="top"><div class="wrap"><div><div class="sub">AUTONOMOUS BUSINESS AGENT</div><div class="brand">JUAN <span style="font-weight:300">/ 控制中心</span></div></div><span class="tag">独立环境 · V0.3</span></div></header>
+<main class="wrap"><section class="hero"><h1>让 Juan 有活就干完，不搞定时空转。</h1><p>发现线索即排队，模型启用后连续处理待办；公开源每六小时同步一次。线索未经核实，不能算客户；对外发布和付款仍关闭。</p></section>
+<div class="grid"><div class="panel"><div class="label">运行状态</div><div class="value ok" id="phase">载入中</div><div class="tiny">Cloudflare Durable Object</div></div><div class="panel"><div class="label">公开源采集轮次</div><div class="value" id="ticks">—</div><div class="tiny">每6小时一次数据更新</div></div><div class="panel"><div class="label">已验证收入</div><div class="value" id="revenue">¥0</div><div class="tiny">以实际到账为准</div></div><div class="panel"><div class="label">已记账新增支出</div><div class="value" id="cash">¥0</div><div class="tiny">尚未接入云服务账单</div></div></div>
+<div class="split"><section class="section"><h2>自治边界</h2><div class="row"><span>自主目标</span><strong>寻找并验证真实付费机会</strong></div><div class="row"><span>模型</span><strong class="warn" id="modelstate">vLLM / 待启用</strong></div><div class="row"><span>信息探索</span><strong class="ok">公开源只读 · 6小时同步</strong></div><div class="row"><span>任务执行</span><strong class="ok">有待办就连续处理</strong></div><div class="row"><span>对外联系/发布</span><strong class="warn">需人工批准，执行器关闭</strong></div><div class="row"><span>支付与采购</span><strong class="warn">关闭</strong></div><div class="row"><span>首笔到账目标</span><strong>¥1</strong></div><p class="hint">线索只记录原始证据，不等于经过验证的市场需求。审批记录不自动触发外部行动。</p></section><section class="section"><h2>研究状态</h2><div class="row"><span>记忆系统</span><strong class="ok">持久化就绪</strong></div><div class="row"><span>公开需求线索</span><strong id="leads">—</strong></div><div class="row"><span>待评估任务</span><strong id="tasks">—</strong></div><div class="row"><span>执行日志</span><strong id="events">—</strong></div><div class="row"><span>最近数据采集</span><strong id="last">等待首次同步</strong></div><div class="row"><span>LLM Adapter</span><strong id="adapter" class="warn">配置检查中</strong></div><p class="hint" id="notice">正在检查服务状态……</p><button id="refresh" type="button">刷新状态</button></section></div>
 <footer class="foot"><span>Juan · Phase 1 / 公开源只读研究</span><span id="updated">—</span></footer></main>
 <script>
-(function(){var b=document.getElementById('refresh');async function refresh(){b.disabled=true;try{var r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);var d=await r.json();document.getElementById('phase').textContent=d.phase==='read-only-research'?'只读研究中':'待检查';document.getElementById('ticks').textContent=String(d.activity.heartbeatCount);document.getElementById('events').textContent=String(d.activity.eventCount)+' 条';document.getElementById('leads').textContent=String(d.activity.opportunityCount)+' 条（未必有效）';document.getElementById('tasks').textContent=String(d.activity.queuedTaskCount)+' 条';document.getElementById('revenue').textContent='¥'+d.finance.verifiedRevenueCny;document.getElementById('cash').textContent='¥'+d.finance.newCashSpendCny;document.getElementById('last').textContent=d.activity.latestHeartbeat?new Date(d.activity.latestHeartbeat).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待首次触发';document.getElementById('updated').textContent='更新于 '+new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});document.getElementById('notice').textContent='公开线索不等于订单；仅凭到账凭据认定收入。';}catch(e){document.getElementById('phase').textContent='查询失败';document.getElementById('notice').textContent='连接异常：'+e.message;}finally{b.disabled=false;}}b.addEventListener('click',refresh);refresh();})();
+(function(){var b=document.getElementById('refresh');async function refresh(){b.disabled=true;try{var r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);var d=await r.json();document.getElementById('phase').textContent=d.phase==='read-only-research'?'只读研究中':'待检查';document.getElementById('ticks').textContent=String(d.activity.discoveryCount);document.getElementById('events').textContent=String(d.activity.eventCount)+' 条';document.getElementById('leads').textContent=String(d.activity.opportunityCount)+' 条（未必有效）';document.getElementById('tasks').textContent=String(d.activity.queuedTaskCount)+' 条';document.getElementById('revenue').textContent='¥'+d.finance.verifiedRevenueCny;document.getElementById('cash').textContent='¥'+d.finance.newCashSpendCny;document.getElementById('modelstate').textContent=d.model.connection==='enabled-by-owner'?'vLLM / 已启用':'vLLM / 未启用';document.getElementById('adapter').textContent=d.model.connection==='enabled-by-owner'?'已启用（传输风险见文档）':'待启用';document.getElementById('last').textContent=d.activity.latestDiscovery?new Date(d.activity.latestDiscovery).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'等待首次同步';document.getElementById('updated').textContent='更新于 '+new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'});document.getElementById('notice').textContent='公开线索不等于订单；仅凭到账凭据认定收入。';}catch(e){document.getElementById('phase').textContent='查询失败';document.getElementById('notice').textContent='连接异常：'+e.message;}finally{b.disabled=false;}}b.addEventListener('click',refresh);refresh();})();
 </script></body></html>`;
 
 export default {
@@ -359,5 +378,10 @@ export default {
       if (error instanceof TypeError || error instanceof RangeError) return json({ error: error.message }, 400);
       return json({ error: 'Internal error' }, 500);
     }
+  },
+  async scheduled(controller, env) {
+    // This is a source refresh, not a periodic agent heartbeat.
+    try { await env.JUAN_CORE.getByName('juan-primary').discover(); }
+    catch (error) { console.error(JSON.stringify({ event: 'juan.discovery_failed', error: asMessage(error) })); }
   },
 };
