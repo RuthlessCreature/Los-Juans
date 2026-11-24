@@ -4,6 +4,7 @@
   "main": "src/worker.mjs",
   "compatibility_date": "2026-11-24",
   "workers_dev": true,
+  "triggers": { "crons": ["0 */6 * * *"] },
   "durable_objects": {
     "bindings": [{ "name": "JUAN_CORE", "class_name": "JuanCore" }]
   },
