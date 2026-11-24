@@ -1,4 +1,4 @@
-export const JUAN_VERSION = '0.2.0';
+export const JUAN_VERSION = '0.3.0';
 export const JUAN_NAME = 'Juan';
 
 export const DEFAULT_MISSION = Object.freeze({
@@ -80,7 +80,7 @@ export function actionPolicy(kind) {
   return 'prohibited';
 }
 
-export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCount, opportunityCount = 0, queuedTaskCount = 0 }) {
+export function publicSnapshot({ state, discoveryCount = 0, latestDiscovery = null, eventCount, opportunityCount = 0, queuedTaskCount = 0 }) {
   return {
     name: JUAN_NAME,
     version: JUAN_VERSION,
@@ -95,6 +95,6 @@ export function publicSnapshot({ state, heartbeatCount, latestHeartbeat, eventCo
     model: { provider: 'vllm', connection: state.modelCallsEnabled ? 'enabled-by-owner' : 'disabled-until-secure-endpoint' },
     goal: { firstVerifiedRevenueCny: state.firstRevenueTargetCny },
     finance: { verifiedRevenueCny: 0, newCashSpendCny: 0, modelAccountingCny: 0 },
-    activity: { heartbeatCount, latestHeartbeat, eventCount, opportunityCount, queuedTaskCount },
+    activity: { discoveryCount, latestDiscovery, eventCount, opportunityCount, queuedTaskCount },
   };
 }
