@@ -5,6 +5,7 @@ import { chatCompletion, completionUrl, ModelNotConfiguredError, parseAssessment
 test('model URL is HTTPS and OpenAI-compatible', () => {
   assert.equal(completionUrl('https://llm.example.com/v1'), 'https://llm.example.com/v1/chat/completions');
   assert.throws(() => completionUrl('http://llm.example.com/v1'), ModelNotConfiguredError);
+  assert.equal(completionUrl('http://llm.example.com/v1', { allowInsecureHttp: true }), 'http://llm.example.com/v1/chat/completions');
   assert.throws(() => completionUrl('https://llm.example.com/unknown'), ModelNotConfiguredError);
 });
 
