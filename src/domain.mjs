@@ -1,4 +1,4 @@
-export const JUAN_VERSION = '0.3.0';
+export const JUAN_VERSION = '0.4.0';
 export const JUAN_NAME = 'Juan';
 
 export const DEFAULT_MISSION = Object.freeze({
