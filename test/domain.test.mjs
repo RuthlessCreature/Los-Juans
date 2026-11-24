@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_MISSION, isSecureModelUrl, publicSnapshot, validateMissionPatch } from '../src/domain.mjs';
+import { DEFAULT_MISSION, isSecureModelUrl, publicSnapshot, validateMissionPatch, validateOpportunity, actionPolicy } from '../src/domain.mjs';
 
 test('default mandate prevents monetary and external actions', () => {
   assert.equal(DEFAULT_MISSION.newCashSpendLimitCny, 0);
@@ -26,4 +26,18 @@ test('public status never includes mission statement or secrets', () => {
   assert.equal(status.activity.heartbeatCount, 3);
   assert.equal(status.finance.verifiedRevenueCny, 0);
   assert.equal(JSON.stringify(status).includes(DEFAULT_MISSION.statement), false);
+});
+
+test('commercial opportunities need a real HTTPS source and stated buyer signal', () => {
+  const valid = { title: 'Potential legitimate business need', sourceUrl: 'https://example.com/a', buyerSignal: 'Public evidence of a buyer explaining the need', hypothesis: 'A low-cost service might solve that need' };
+  assert.deepEqual(validateOpportunity(valid), valid);
+  assert.throws(() => validateOpportunity({ ...valid, sourceUrl: 'http://example.com/a' }));
+  assert.throws(() => validateOpportunity({ ...valid, buyerSignal: 'no proof' }));
+});
+
+test('commercially sensitive actions require approval regardless of LLM output', () => {
+  assert.equal(actionPolicy('analyze-evidence'), 'allowed-in-read-only-mode');
+  assert.equal(actionPolicy('contact-person'), 'requires-human-approval');
+  assert.equal(actionPolicy('purchase'), 'requires-human-approval');
+  assert.equal(actionPolicy('self-change-permissions'), 'prohibited');
 });
