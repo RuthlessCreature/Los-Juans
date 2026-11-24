@@ -22,6 +22,8 @@ test('model adapter uses secure authenticated requests', async () => {
   assert.equal(called[0].url, 'https://llm.example.com/v1/chat/completions');
   assert.equal(called[0].options.headers.authorization, 'Bearer fake-test-key');
   assert.equal(called[0].options.redirect, 'manual');
+  assert.deepEqual(JSON.parse(called[0].options.body).response_format, { type: 'json_object' });
+  assert.equal(JSON.parse(called[0].options.body).chat_template_kwargs.enable_thinking, false);
   assert.equal(result.usage.total_tokens, 7);
   assert.equal(result.content, 'OK');
 });
