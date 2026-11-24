@@ -32,6 +32,7 @@ Juan 是一个基于 Cloudflare Worker + Durable Object 的自主创业 Agent �
 | POST | `/api/admin/opportunities` | 管理员增加具有 HTTPS 来源和公开证据的线索 |
 | POST | `/api/admin/discover` | 人工触发一次固定公开源只读扫描 |
 | PATCH | `/api/admin/model-mode` | 在端点、模型及密钥配置后显式开关模型调用 |
+| GET | `/api/admin/model-probe` | 只请求模型服务 `/v1/models`，返回连通性、HTTP 状态和耗时，不跑推理 |
 | POST | `/api/admin/opportunities/:id/assess` | 使用安全配置的 vLLM 评估机会；否则返回 409 |
 | POST | `/api/admin/actions` | 将需批准的行动添加到待审队列 |
 | POST | `/api/admin/actions/:id/decision` | 管理员批准或拒绝；不触发实际执行 |
