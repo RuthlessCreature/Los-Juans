@@ -29,7 +29,7 @@ export async function chatCompletion({ baseUrl, apiKey, model, messages, allowIn
   try {
     const response = await fetcher(endpoint, {
       method: 'POST',
-      redirect: 'error', // Never forward a bearer token through a redirect.
+      redirect: 'manual', // Workers reject `error`; 3xx stays non-ok and is never followed.
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages, stream: false, temperature: 0.2, max_tokens: 700 }),
       signal: controller.signal,
