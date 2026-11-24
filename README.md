@@ -12,6 +12,7 @@ Juan 是一个基于 Cloudflare Worker + Durable Object 的自主创业 Agent �
 - 每 6 小时从固定的 [HN Algolia Search API](https://hn.algolia.com/api) 读取近期公开评论，提取**未经验证的需求线索**；HTTPS 来源链接、原文片段和初步假设存入 SQLite，自动去重，最多保留 500 条。
 - 模型适配器：兼容 OpenAI Chat Completions 格式，强制 HTTPS、禁止重定向、超时控制、严格解析机会评估 JSON。
 - 机会池和行动审批队列：记录待审、批准、拒绝状态；即使批准，当前版本也**没有对外执行器**。
+- 每条新线索自动创建持久化 `assess-opportunity` 任务；在所有安全配置就绪并由管理员明确启用模型之前，任务只排队。启用后定时循环最多处理 1 条/15 分钟，最多 20 次模型尝试/UTC 日、每条最多 3 次尝试。
 - 公开接口仅返回经过裁剪的安全状态；管理接口默认锁定。
 - 首笔收入目标 ¥1；实际到账收入初始化为 ¥0，绝不生成虚构收款。
 - 默认关闭：大模型调用、对外互动、付费操作、任何未授权工具执行。
@@ -53,6 +54,7 @@ curl --fail-with-body -X POST 'https://juan-autonomous-agent.nostalgia-ho.worker
 - `events`：持续唤醒和变更日志，保留最新 1000 项。
 - `ledger`：真实收入和费用的凭证引用，未接收真实交易前保持空表。
 - `opportunities`：去重的公开需求线索、来源、评估草案；初始状态为 `unverified`。
+- `tasks`：独立评估任务及排队、运行、完成、失败状态，超时状态可恢复。
 - `approvals`：待审操作及人工决定，不代表操作已经执行。
 - `last_public_scan` 设置：控制公开源扫描间隔；外部搜索 API 故障时保持下一次唤醒。
 
