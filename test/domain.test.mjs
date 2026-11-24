@@ -22,8 +22,9 @@ test('never transmit model credentials over HTTP', () => {
 });
 
 test('public status never includes mission statement or secrets', () => {
-  const status = publicSnapshot({ state: DEFAULT_MISSION, heartbeatCount: 3, eventCount: 4, latestHeartbeat: null });
+  const status = publicSnapshot({ state: DEFAULT_MISSION, heartbeatCount: 3, eventCount: 4, latestHeartbeat: null, queuedTaskCount: 2 });
   assert.equal(status.activity.heartbeatCount, 3);
+  assert.equal(status.activity.queuedTaskCount, 2);
   assert.equal(status.finance.verifiedRevenueCny, 0);
   assert.equal(JSON.stringify(status).includes(DEFAULT_MISSION.statement), false);
 });
