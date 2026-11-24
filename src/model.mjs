@@ -7,8 +7,13 @@ export class ModelNotConfiguredError extends Error {
   }
 }
 
-export function completionUrl(baseUrl) {
-  if (!isSecureModelUrl(baseUrl)) throw new ModelNotConfiguredError('Model endpoint must use HTTPS');
+export function completionUrl(baseUrl, { allowInsecureHttp = false } = {}) {
+  const explicitlyAllowedHttp = allowInsecureHttp
+    && typeof baseUrl === 'string' && baseUrl.startsWith('http://')
+    && isSecureModelUrl(`https://${baseUrl.slice('http://'.length)}`);
+  if (!isSecureModelUrl(baseUrl) && !explicitlyAllowedHttp) {
+    throw new ModelNotConfiguredError('Model endpoint must use HTTPS unless the owner explicitly enables HTTP');
+  }
   const parsed = new URL(baseUrl);
   if (/\/v1\/?$/.test(parsed.pathname)) parsed.pathname = parsed.pathname.replace(/\/$/, '') + '/chat/completions';
   else if (!parsed.pathname.endsWith('/v1/chat/completions')) throw new ModelNotConfiguredError('Unexpected model API path');
@@ -16,9 +21,9 @@ export function completionUrl(baseUrl) {
   return parsed.toString();
 }
 
-export async function chatCompletion({ baseUrl, apiKey, model, messages, fetcher = fetch, timeoutMs = 25_000 }) {
+export async function chatCompletion({ baseUrl, apiKey, model, messages, allowInsecureHttp = false, fetcher = fetch, timeoutMs = 25_000 }) {
   if (!apiKey || !model || !Array.isArray(messages) || !messages.length) throw new ModelNotConfiguredError();
-  const endpoint = completionUrl(baseUrl);
+  const endpoint = completionUrl(baseUrl, { allowInsecureHttp });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
