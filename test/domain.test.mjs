@@ -50,3 +50,11 @@ test('an unknown buyer becomes a low-confidence finding, never an invented custo
   assert.match(result.buyer, /No identifiable paying buyer/);
   assert.equal(result.hasVerifiedPayment, false);
 });
+
+test('missing buyer and offer become an explicit insufficient-evidence rejection', () => {
+  const result = validateAssessment({ buyer: '', offer: null, test: 'Check real payment intent first', risk: 'A public comment is not a paid order', confidence: 90 });
+  assert.equal(result.insufficientEvidence, true);
+  assert.equal(result.confidence, 10);
+  assert.deepEqual(result.normalizedMissingFields, ['buyer', 'offer']);
+  assert.equal(result.hasVerifiedPayment, false);
+});
