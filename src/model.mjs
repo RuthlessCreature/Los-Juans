@@ -21,7 +21,7 @@ export function completionUrl(baseUrl, { allowInsecureHttp = false } = {}) {
   return parsed.toString();
 }
 
-export async function chatCompletion({ baseUrl, apiKey, model, messages, allowInsecureHttp = false, fetcher = fetch, timeoutMs = 25_000 }) {
+export async function chatCompletion({ baseUrl, apiKey, model, messages, allowInsecureHttp = false, fetcher = fetch, timeoutMs = 90_000 }) {
   if (!apiKey || !model || !Array.isArray(messages) || !messages.length) throw new ModelNotConfiguredError();
   const endpoint = completionUrl(baseUrl, { allowInsecureHttp });
   const controller = new AbortController();
